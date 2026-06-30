@@ -9,9 +9,10 @@ from xml.dom import minidom
 
 st.set_page_config(page_title="JW to BTNotes Perfect", page_icon="📚", layout="centered")
 
-st.title("📚 Οργανωμένος Μετατροπέας JW Library (Έκδοση με Εδάφια)")
-st.write("Αυτό το εργαλείο βρίσκει τα κρυμμένα εδάφια από το JW Library και τα βάζει στον τίτλο κάθε σημείωσης.")
+st.title("📚 Απόλυτος Μετατροπέας JW Library (Ταξινομημένος)")
+st.write("Αυτό το εργαλείο βρίσκει τα σωστά εδάφια και ταξινομεί τα βιβλία με τη σειρά της Γραφής.")
 
+# Λίστα με τη σωστή σειρά των βιβλίων για την ταξινόμηση
 BIBLE_BOOKS = {
     1: "Γένεση", 2: "Έξοδος", 3: "Λευιτικό", 4: "Αριθμοί", 5: "Δευτερονόμιο",
     6: "Ιησούς του Ναυή", 7: "Κριτές", 8: "Ρουθ", 9: "Α΄ Σαμουήλ", 10: "Β΄ Σαμουήλ",
@@ -56,19 +57,25 @@ if uploaded_file is not None:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
-            # Διάγνωση στηλών του πίνακα Location για να δούμε αν λέγεται Verse ή VerseNumber
+            # Έλεγχος στηλών του πίνακα Location
             cursor.execute("PRAGMA table_info(Location);")
             columns = [col[1] for col in cursor.fetchall()]
-            v_col = "Verse" if "Verse" in columns else ("VerseNumber" if "VerseNumber" in columns else "null")
             
-            # Ερώτημα που ενώνει τη σημείωση (Note) με την τοποθεσία (Location)
-            # Χρησιμοποιούμε σωστά το Note.LocationId = Location.LocationId
+            # Δυναμική επιλογή της σωστής στήλης για το εδάφιο
+            if "Verse" in columns:
+                v_col = "L.Verse"
+            elif "VerseNumber" in columns:
+                v_col = "L.VerseNumber"
+            elif "Symbol" in columns:
+                v_col = "L.Symbol"
+            else:
+                v_col = "1"
+            
             query = f"""
                 SELECT 
                     L.BookNumber, 
                     L.ChapterNumber, 
-                    L.IssueTagNumber,
-                    {f'L.{v_col}' if v_col != 'null' else '1'},
+                    {v_col}, 
                     N.Title, 
                     N.Content
                 FROM Note N
@@ -80,10 +87,10 @@ if uploaded_file is not None:
             conn.close()
             
             if rows:
-                root_xml = ET.Element("db", serverCounter=str(len(rows) + 500))
+                root_xml = ET.Element("db", serverCounter=str(len(rows) + 1000))
                 folders_element = ET.SubElement(root_xml, "folders")
                 
-                # Κεντρικός Φάκελος
+                # 1. Κεντρικός Φάκελος
                 main_folder_uuid = str(uuid.uuid4())
                 ET.SubElement(folders_element, "folder", {
                     "id": "1001",
@@ -93,50 +100,49 @@ if uploaded_file is not None:
                     "password": "null"
                 })
                 
+                # Δημιουργία των φακέλων των βιβλίων με τη ΣΩΣΤΗ ΣΕΙΡΑ της Γραφής εκ των προτέρων
                 book_folders = {}
-                book_folder_id_counter = 2000
+                folder_id_counter = 2000
+                
+                for book_id in sorted(BIBLE_BOOKS.keys()):
+                    b_name = BIBLE_BOOKS[book_id]
+                    sub_folder_uuid = str(uuid.uuid4())
+                    book_folders[book_id] = sub_folder_uuid
+                    
+                    ET.SubElement(folders_element, "folder", {
+                        "id": str(folder_id_counter),
+                        "uuid": sub_folder_uuid,
+                        "name": b_name,
+                        "parent": main_folder_uuid,
+                        "password": "null"
+                    })
+                    folder_id_counter += 1
                 
                 talks_element = ET.SubElement(root_xml, "talks", number=str(len(rows)))
                 current_timestamp = str(int(time.time() * 1000))
                 
                 for idx, row in enumerate(rows, start=1):
-                    book_num, chapter, issue_tag, verse, title_text, content_text = row
+                    book_num, chapter, verse, title_text, content_text = row
                     
-                    # Έλεγχος αν είναι βιβλίο της Γραφής
+                    # Έλεγχος αν ανήκει σε βιβλίο
                     if book_num and book_num in BIBLE_BOOKS:
                         book_name = BIBLE_BOOKS[book_num]
+                        target_folder_uuid = book_folders[book_num]
                         
-                        # Δημιουργία υποφακέλου για το βιβλίο αν δεν υπάρχει
-                        if book_name not in book_folders:
-                            sub_folder_uuid = str(uuid.uuid4())
-                            book_folders[book_name] = sub_folder_uuid
-                            ET.SubElement(folders_element, "folder", {
-                                "id": str(book_folder_id_counter),
-                                "uuid": sub_folder_uuid,
-                                "name": book_name,
-                                "parent": main_folder_uuid,
-                                "password": "null"
-                            })
-                            book_folder_id_counter += 1
-                        
-                        target_folder_uuid = book_folders[book_name]
-                        
-                        # Φτιάχνουμε το σωστό εδάφιο [Ψαλμοί 119:105]
                         ch_part = f" {chapter}" if chapter else ""
-                        v_part = f":{verse}" if verse and str(verse) != "0" else ""
+                        # Αν το εδάφιο βγει κενό ή μηδέν, βάζουμε μια παύλα ή το αφήνουμε κενό
+                        v_part = f":{verse}" if verse and str(verse) != "None" and str(verse) != "0" else ""
                         prefix = f"[{book_name}{ch_part}{v_part}] "
                     else:
+                        # Αν είναι γενική σημείωση, μπαίνει απευθείας στον κεντρικό φάκελο (χύμα στο τέλος)
                         target_folder_uuid = main_folder_uuid
                         prefix = "[Γενική Σημείωση] "
                     
-                    # Καθαρισμός τίτλου
+                    # Διαμόρφωση Τίτλου
                     user_title = str(title_text).strip() if title_text and str(title_text).strip() != "None" else ""
-                    
-                    # Φτιάχνουμε τον τελικό τίτλο: Εδάφιο + ο Τίτλος σου (αν υπάρχει)
                     if user_title:
                         final_title = prefix + user_title
                     else:
-                        # Αν δεν είχες βάλει τίτλο, παίρνουμε τις πρώτες 4 λέξεις από το κείμενο για να φαίνεται όμορφο
                         clean_content = str(content_text).strip() if content_text else ""
                         words = clean_content.split()
                         preview = " ".join(words[:4]) + "..." if len(words) > 4 else clean_content
@@ -145,7 +151,7 @@ if uploaded_file is not None:
                     final_content = str(content_text) if content_text else ""
                     
                     talk_uuid = str(uuid.uuid4())
-                    talk_node = ET.SubElement(talks_element, "talk", {
+                    ET.SubElement(talks_element, "talk", {
                         "id": str(idx + 10000),
                         "uuid": talk_uuid,
                         "last_created": "1",
@@ -155,6 +161,7 @@ if uploaded_file is not None:
                         "folder": target_folder_uuid
                     })
                     
+                    talk_node = talks_element[-1]
                     title = ET.SubElement(talk_node, "title")
                     title.text = final_title
                     
@@ -178,18 +185,18 @@ if uploaded_file is not None:
                 parsed_xml = minidom.parseString(xml_str)
                 pretty_xml = parsed_xml.toprettyxml(indent="    ", encoding="utf-8")
                 
-                xml_filename = "jw_perfect_import.xml"
+                xml_filename = "jw_sorted_perfect.xml"
                 with open(xml_filename, "wb") as f:
                     f.write(pretty_xml)
                 
                 st.markdown("---")
-                st.success(f"🎉 Επιτυχία! Ετοιμάστηκε το αρχείο με {len(rows)} οργανωμένες σημειώσεις!")
+                st.success(f"🎉 Έτοιμο! Ταξινομήθηκαν {len(rows)} σημειώσεις με τη σειρά της Γραφής!")
                 
                 with open(xml_filename, "rb") as f:
                     st.download_button(
-                        label="📥 Κατεβάστε το ΤΕΛΙΚΟ αρχείο .xml",
+                        label="📥 Κατεβάστε το ΝΕΟ αρχείο .xml",
                         data=f,
-                        file_name="jw_perfect_import.xml",
+                        file_name="jw_sorted_perfect.xml",
                         mime="application/xml"
                     )
             else:
