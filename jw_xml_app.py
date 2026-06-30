@@ -9,8 +9,8 @@ from xml.dom import minidom
 
 st.set_page_config(page_title="JW to BTNotes Organized", page_icon="📚", layout="centered")
 
-st.title("📚 Οργανωμένος Μετατροπέας JW Library")
-st.write("Αυτό το εργαλείο χωρίζει αυτόματα τις σημειώσεις σας σε **υποφακέλους ανά βιβλίο της Γραφής**.")
+st.title("📚 Οργανωμένος Μετατροπέας JW Library (Με Εδάφια)")
+st.write("Αυτό το εργαλείο χωρίζει τις σημειώσεις σας σε **υποφακέλους ανά βιβλίο** και προσθέτει το **κεφάλαιο και το εδάφιο** στον τίτλο.")
 
 BIBLE_BOOKS = {
     1: "Γένεση", 2: "Έξοδος", 3: "Λευιτικό", 4: "Αριθμοί", 5: "Δευτερονόμιο",
@@ -56,12 +56,22 @@ if uploaded_file is not None:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
-            # Τραβάμε τις σημειώσεις μαζί με τις πληροφορίες τοποθεσίας (βιβλίο, κεφάλαιο)
-            # Χρησιμοποιούμε LEFT JOIN για να μην χάσουμε καμία σημείωση, ακόμα κι αν δεν έχει τοποθεσία
-            query = """
+            # Ελέγχουμε αν υπάρχει στήλη Verse ή VerseNumber στη βάση σου
+            cursor.execute("PRAGMA table_info(Location);")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            verse_column = "1" # Προεπιλογή αν δεν βρεθεί τίποτα
+            if "Verse" in columns:
+                verse_column = "L.Verse"
+            elif "VerseNumber" in columns:
+                verse_column = "L.VerseNumber"
+            
+            # Δημιουργούμε το ερώτημα με τη σωστή στήλη εδαφίου
+            query = f"""
                 SELECT 
                     L.BookNumber, 
                     L.ChapterNumber, 
+                    {verse_column}, 
                     N.Title, 
                     N.Content, 
                     N.Created
@@ -74,12 +84,12 @@ if uploaded_file is not None:
             conn.close()
             
             if rows:
-                st.success(f"📊 Επεξεργασία {len(rows)} σημειώσεων!")
+                st.success(f"📊 Επιτυχής επεξεργασία {len(rows)} σημειώσεων!")
                 
                 root_xml = ET.Element("db", serverCounter=str(len(rows) + 500))
                 folders_element = ET.SubElement(root_xml, "folders")
                 
-                # 1. Κεντρικός Φάκελος
+                # Κεντρικός Φάκελος
                 main_folder_uuid = str(uuid.uuid4())
                 ET.SubElement(folders_element, "folder", {
                     "id": "1001",
@@ -89,7 +99,6 @@ if uploaded_file is not None:
                     "password": "null"
                 })
                 
-                # Δημιουργία χάρτη για να κρατάμε τα UUID των υποφακέλων των βιβλίων
                 book_folders = {}
                 book_folder_id_counter = 2000
                 
@@ -97,12 +106,12 @@ if uploaded_file is not None:
                 current_timestamp = str(int(time.time() * 1000))
                 
                 for idx, row in enumerate(rows, start=1):
-                    book_num, chapter, title_text, content_text, created_date = row
+                    book_num, chapter, verse, title_text, content_text, created_date = row
                     
-                    # Καθορισμός του σωστού φακέλου
+                    # Φτιάχνουμε το πρόθεμα [Βιβλίο Κεφάλαιο:Εδάφιο]
                     if book_num and book_num in BIBLE_BOOKS:
                         book_name = BIBLE_BOOKS[book_num]
-                        # Αν δεν έχουμε φτιάξει ακόμα υποφάκελο για αυτό το βιβλίο, τον φτιάχνουμε τώρα
+                        
                         if book_name not in book_folders:
                             sub_folder_uuid = str(uuid.uuid4())
                             book_folders[book_name] = sub_folder_uuid
@@ -110,26 +119,36 @@ if uploaded_file is not None:
                                 "id": str(book_folder_id_counter),
                                 "uuid": sub_folder_uuid,
                                 "name": book_name,
-                                "parent": main_folder_uuid,  # Βάζουμε γονέα τον κεντρικό φάκελο
+                                "parent": main_folder_uuid,
                                 "password": "null"
                             })
                             book_folder_id_counter += 1
                         
                         target_folder_uuid = book_folders[book_name]
-                        prefix = f"[{book_name} {chapter if chapter else ''}] "
+                        
+                        # Δημιουργία καθαρού string για το εδάφιο
+                        ch_str = f" {chapter}" if chapter else ""
+                        v_str = f":{verse}" if verse and str(verse) != "1" else ""
+                        prefix = f"[{book_name}{ch_str}{v_str}] "
                     else:
-                        # Αν δεν έχει βιβλίο (π.χ. γενική σημείωση), μπαίνει στον κεντρικό φάκελο
                         target_folder_uuid = main_folder_uuid
                         prefix = ""
                     
-                    # Διαμόρφωση τίτλου και περιεχομένου
-                    final_title = str(title_text) if title_text and str(title_text).strip() != "None" else "Χωρίς Τίτλο"
-                    if prefix and not final_title.startswith("["):
-                        final_title = prefix + final_title
-                        
+                    # Διαμόρφωση τίτλου
+                    final_title = str(title_text) if title_text and str(title_text).strip() != "None" else ""
+                    
+                    if prefix:
+                        if final_title:
+                            final_title = prefix + final_title
+                        else:
+                            # Αν δεν είχε τίτλο η σημείωση, βάζουμε σαν τίτλο το ίδιο το εδάφιο
+                            final_title = prefix.strip()
+                    else:
+                        if not final_title:
+                            final_title = f"Σημείωση {idx}"
+                            
                     final_content = str(content_text) if content_text else ""
                     
-                    # Δημιουργία του <talk>
                     talk_uuid = str(uuid.uuid4())
                     talk_node = ET.SubElement(talks_element, "talk", {
                         "id": str(idx + 10000),
@@ -138,7 +157,7 @@ if uploaded_file is not None:
                         "lang": "64",
                         "date": current_timestamp,
                         "last_open": current_timestamp,
-                        "folder": target_folder_uuid  # Μπαίνει στον σωστό υποφάκελο!
+                        "folder": target_folder_uuid
                     })
                     
                     title = ET.SubElement(talk_node, "title")
@@ -164,18 +183,18 @@ if uploaded_file is not None:
                 parsed_xml = minidom.parseString(xml_str)
                 pretty_xml = parsed_xml.toprettyxml(indent="    ", encoding="utf-8")
                 
-                xml_filename = "jw_organized_notes.xml"
+                xml_filename = "jw_organized_with_verses.xml"
                 with open(xml_filename, "wb") as f:
                     f.write(pretty_xml)
                 
                 st.markdown("---")
-                st.success("🎉 Το οργανωμένο αρχείο XML δημιουργήθηκε με επιτυχία!")
+                st.success("🎉 Το αρχείο XML με Φακέλους και Εδάφια δημιουργήθηκε!")
                 
                 with open(xml_filename, "rb") as f:
                     st.download_button(
-                        label="📥 Κατεβάστε το ΟΡΓΑΝΩΜΕΝΟ αρχείο .xml",
+                        label="📥 Κατεβάστε το ΤΕΛΙΚΟ αρχείο .xml",
                         data=f,
-                        file_name="jw_organized_notes.xml",
+                        file_name="jw_organized_with_verses.xml",
                         mime="application/xml"
                     )
             else:
