@@ -7,10 +7,10 @@ import time
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
-st.set_page_config(page_title="JW to BTNotes Organized", page_icon="📚", layout="centered")
+st.set_page_config(page_title="JW to BTNotes Perfect", page_icon="📚", layout="centered")
 
-st.title("📚 Οργανωμένος Μετατροπέας JW Library (Με Εδάφια)")
-st.write("Αυτό το εργαλείο χωρίζει τις σημειώσεις σας σε **υποφακέλους ανά βιβλίο** και προσθέτει το **κεφάλαιο και το εδάφιο** στον τίτλο.")
+st.title("📚 Οργανωμένος Μετατροπέας JW Library (Έκδοση με Εδάφια)")
+st.write("Αυτό το εργαλείο βρίσκει τα κρυμμένα εδάφια από το JW Library και τα βάζει στον τίτλο κάθε σημείωσης.")
 
 BIBLE_BOOKS = {
     1: "Γένεση", 2: "Έξοδος", 3: "Λευιτικό", 4: "Αριθμοί", 5: "Δευτερονόμιο",
@@ -56,25 +56,21 @@ if uploaded_file is not None:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
-            # Ελέγχουμε αν υπάρχει στήλη Verse ή VerseNumber στη βάση σου
+            # Διάγνωση στηλών του πίνακα Location για να δούμε αν λέγεται Verse ή VerseNumber
             cursor.execute("PRAGMA table_info(Location);")
             columns = [col[1] for col in cursor.fetchall()]
+            v_col = "Verse" if "Verse" in columns else ("VerseNumber" if "VerseNumber" in columns else "null")
             
-            verse_column = "1" # Προεπιλογή αν δεν βρεθεί τίποτα
-            if "Verse" in columns:
-                verse_column = "L.Verse"
-            elif "VerseNumber" in columns:
-                verse_column = "L.VerseNumber"
-            
-            # Δημιουργούμε το ερώτημα με τη σωστή στήλη εδαφίου
+            # Ερώτημα που ενώνει τη σημείωση (Note) με την τοποθεσία (Location)
+            # Χρησιμοποιούμε σωστά το Note.LocationId = Location.LocationId
             query = f"""
                 SELECT 
                     L.BookNumber, 
                     L.ChapterNumber, 
-                    {verse_column}, 
+                    L.IssueTagNumber,
+                    {f'L.{v_col}' if v_col != 'null' else '1'},
                     N.Title, 
-                    N.Content, 
-                    N.Created
+                    N.Content
                 FROM Note N
                 LEFT JOIN Location L ON N.LocationId = L.LocationId;
             """
@@ -84,8 +80,6 @@ if uploaded_file is not None:
             conn.close()
             
             if rows:
-                st.success(f"📊 Επιτυχής επεξεργασία {len(rows)} σημειώσεων!")
-                
                 root_xml = ET.Element("db", serverCounter=str(len(rows) + 500))
                 folders_element = ET.SubElement(root_xml, "folders")
                 
@@ -106,12 +100,13 @@ if uploaded_file is not None:
                 current_timestamp = str(int(time.time() * 1000))
                 
                 for idx, row in enumerate(rows, start=1):
-                    book_num, chapter, verse, title_text, content_text, created_date = row
+                    book_num, chapter, issue_tag, verse, title_text, content_text = row
                     
-                    # Φτιάχνουμε το πρόθεμα [Βιβλίο Κεφάλαιο:Εδάφιο]
+                    # Έλεγχος αν είναι βιβλίο της Γραφής
                     if book_num and book_num in BIBLE_BOOKS:
                         book_name = BIBLE_BOOKS[book_num]
                         
+                        # Δημιουργία υποφακέλου για το βιβλίο αν δεν υπάρχει
                         if book_name not in book_folders:
                             sub_folder_uuid = str(uuid.uuid4())
                             book_folders[book_name] = sub_folder_uuid
@@ -126,27 +121,27 @@ if uploaded_file is not None:
                         
                         target_folder_uuid = book_folders[book_name]
                         
-                        # Δημιουργία καθαρού string για το εδάφιο
-                        ch_str = f" {chapter}" if chapter else ""
-                        v_str = f":{verse}" if verse and str(verse) != "1" else ""
-                        prefix = f"[{book_name}{ch_str}{v_str}] "
+                        # Φτιάχνουμε το σωστό εδάφιο [Ψαλμοί 119:105]
+                        ch_part = f" {chapter}" if chapter else ""
+                        v_part = f":{verse}" if verse and str(verse) != "0" else ""
+                        prefix = f"[{book_name}{ch_part}{v_part}] "
                     else:
                         target_folder_uuid = main_folder_uuid
-                        prefix = ""
+                        prefix = "[Γενική Σημείωση] "
                     
-                    # Διαμόρφωση τίτλου
-                    final_title = str(title_text) if title_text and str(title_text).strip() != "None" else ""
+                    # Καθαρισμός τίτλου
+                    user_title = str(title_text).strip() if title_text and str(title_text).strip() != "None" else ""
                     
-                    if prefix:
-                        if final_title:
-                            final_title = prefix + final_title
-                        else:
-                            # Αν δεν είχε τίτλο η σημείωση, βάζουμε σαν τίτλο το ίδιο το εδάφιο
-                            final_title = prefix.strip()
+                    # Φτιάχνουμε τον τελικό τίτλο: Εδάφιο + ο Τίτλος σου (αν υπάρχει)
+                    if user_title:
+                        final_title = prefix + user_title
                     else:
-                        if not final_title:
-                            final_title = f"Σημείωση {idx}"
-                            
+                        # Αν δεν είχες βάλει τίτλο, παίρνουμε τις πρώτες 4 λέξεις από το κείμενο για να φαίνεται όμορφο
+                        clean_content = str(content_text).strip() if content_text else ""
+                        words = clean_content.split()
+                        preview = " ".join(words[:4]) + "..." if len(words) > 4 else clean_content
+                        final_title = prefix + (preview if preview else "Σημείωση")
+                        
                     final_content = str(content_text) if content_text else ""
                     
                     talk_uuid = str(uuid.uuid4())
@@ -183,18 +178,18 @@ if uploaded_file is not None:
                 parsed_xml = minidom.parseString(xml_str)
                 pretty_xml = parsed_xml.toprettyxml(indent="    ", encoding="utf-8")
                 
-                xml_filename = "jw_organized_with_verses.xml"
+                xml_filename = "jw_perfect_import.xml"
                 with open(xml_filename, "wb") as f:
                     f.write(pretty_xml)
                 
                 st.markdown("---")
-                st.success("🎉 Το αρχείο XML με Φακέλους και Εδάφια δημιουργήθηκε!")
+                st.success(f"🎉 Επιτυχία! Ετοιμάστηκε το αρχείο με {len(rows)} οργανωμένες σημειώσεις!")
                 
                 with open(xml_filename, "rb") as f:
                     st.download_button(
                         label="📥 Κατεβάστε το ΤΕΛΙΚΟ αρχείο .xml",
                         data=f,
-                        file_name="jw_organized_with_verses.xml",
+                        file_name="jw_perfect_import.xml",
                         mime="application/xml"
                     )
             else:
