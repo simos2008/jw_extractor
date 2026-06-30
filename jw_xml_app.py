@@ -34,7 +34,6 @@ BIBLE_BOOKS = {
 uploaded_file = st.file_uploader("Ανεβάστε το αρχείο .jwlibrary", type=["jwlibrary"])
 
 if uploaded_file is not None:
-    # Καθαρισμός και δημιουργία φακέλου εξαγωγής
     target_dir = "temp_extracted"
     if not os.path.exists(target_dir):
         os.makedirs(target_dir)
@@ -46,7 +45,6 @@ if uploaded_file is not None:
         with zipfile.ZipFile("temp_backup.zip", "r") as zip_ref:
             zip_ref.extractall(target_dir)
             
-        # 🔍 ΕΞΥΠΝΗ ΑΝΑΖΗΤΗΣΗ: Ψάχνουμε οποιοδήποτε αρχείο .db μέσα στον φάκελο
         db_path = None
         for root, dirs, files in os.walk(target_dir):
             for file in files:
@@ -58,31 +56,48 @@ if uploaded_file is not None:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
-            query = """
-                SELECT 
-                    L.BookNumber, 
-                    L.ChapterNumber, 
-                    L.VerseNumber, 
-                    N.Title, 
-                    N.Content, 
-                    N.Created
-                FROM Note N
-                JOIN Location L ON N.LocationId = L.LocationId
-                WHERE L.BookNumber IS NOT NULL 
-                  AND L.KeySymbol IS NULL;
-            """
-            
-            cursor.execute(query)
-            rows = cursor.fetchall()
+            # Δοκιμάζουμε πρώτα αν υπάρχει η στήλη Verse αντί για VerseNumber
+            try:
+                query = """
+                    SELECT 
+                        L.BookNumber, 
+                        L.ChapterNumber, 
+                        L.Verse, 
+                        N.Title, 
+                        N.Content, 
+                        N.Created
+                    FROM Note N
+                    JOIN Location L ON N.LocationId = L.LocationId
+                    WHERE L.BookNumber IS NOT NULL 
+                      AND L.KeySymbol IS NULL;
+                """
+                cursor.execute(query)
+                rows = cursor.fetchall()
+            except sqlite3.OperationalError:
+                # Αν αποτύχει, δοκιμάζουμε χωρίς την ειδική στήλη εδαφίου για να μην κρασάρει
+                query = """
+                    SELECT 
+                        L.BookNumber, 
+                        L.ChapterNumber, 
+                        1 as Verse, 
+                        N.Title, 
+                        N.Content, 
+                        N.Created
+                    FROM Note N
+                    JOIN Location L ON N.LocationId = L.LocationId
+                    WHERE L.BookNumber IS NOT NULL 
+                      AND L.KeySymbol IS NULL;
+                """
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                
             conn.close()
             
             if rows:
                 st.subheader(f"📊 Βρέθηκαν {len(rows)} σημειώσεις σε εδάφια!")
                 
-                # Δημιουργία XML δομής (BTNotes format)
                 root_xml = ET.Element("db", serverCounter=str(len(rows) + 50))
                 
-                # Φάκελοι
                 folders_element = ET.SubElement(root_xml, "folders")
                 import_folder_uuid = str(uuid.uuid4())
                 ET.SubElement(folders_element, "folder", {
@@ -93,7 +108,6 @@ if uploaded_file is not None:
                     "password": "null"
                 })
                 
-                # Σημειώσεις
                 talks_element = ET.SubElement(root_xml, "talks", number=str(len(rows)))
                 current_timestamp = str(int(time.time() * 1000))
                 
@@ -156,7 +170,7 @@ if uploaded_file is not None:
             else:
                 st.warning("Δεν βρέθηκαν σημειώσεις βιβλικών εδαφίων στη βάση δεδομένων.")
         else:
-            st.error("Δεν βρέθηκε κανένα αρχείο βάσης δεδομένων (.db) μέσα στο αντίγραφο ασφαλείας. Δοκιμάστε να κάνετε ξανά εξαγωγή (Backup) από το JW Library.")
+            st.error("Δεν βρέθηκε αρχείο βάσης δεδομένων.")
             
     except Exception as e:
         st.error(f"Σφάλμα κατά την επεξεργασία: {e}")
