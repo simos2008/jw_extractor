@@ -10,7 +10,7 @@ from xml.dom import minidom
 st.set_page_config(page_title="JW to BTNotes XML", page_icon="📚", layout="centered")
 
 st.title("📚 Μετατροπέας JW Library σε BTNotes XML")
-st.write("Ανεβάστε το backup αρχείο σας (ανεξάρτητα από το όνομα ή την ημερομηνία) για να πάρετε το XML για το Remix App σας.")
+st.write("Ανεβάστε το backup αρχείο σας για να πάρετε το XML για το Remix App σας.")
 
 BIBLE_BOOKS = {
     1: "Γένεση", 2: "Έξοδος", 3: "Λευιτικό", 4: "Αριθμοί", 5: "Δευτερονόμιο",
@@ -31,24 +31,30 @@ BIBLE_BOOKS = {
     66: "Αποκάλυψη"
 }
 
-# Δεχόμαστε οποιοδήποτε αρχείο .jwlibrary, όποιο όνομα κι αν έχει
 uploaded_file = st.file_uploader("Ανεβάστε το αρχείο .jwlibrary", type=["jwlibrary"])
 
 if uploaded_file is not None:
-    # Καθαρίζουμε παλιούς φακέλους για ασφάλεια
-    if not os.path.exists("temp_extracted"):
-        os.makedirs("temp_extracted")
+    # Καθαρισμός και δημιουργία φακέλου εξαγωγής
+    target_dir = "temp_extracted"
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir)
         
     with open("temp_backup.zip", "wb") as f:
         f.write(uploaded_file.getbuffer())
         
     try:
         with zipfile.ZipFile("temp_backup.zip", "r") as zip_ref:
-            zip_ref.extractall("temp_extracted")
+            zip_ref.extractall(target_dir)
             
-        db_path = "temp_extracted/UserData.db"
+        # 🔍 ΕΞΥΠΝΗ ΑΝΑΖΗΤΗΣΗ: Ψάχνουμε οποιοδήποτε αρχείο .db μέσα στον φάκελο
+        db_path = None
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                if file.lower().endswith('.db'):
+                    db_path = os.path.join(root, file)
+                    break
         
-        if os.path.exists(db_path):
+        if db_path and os.path.exists(db_path):
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
@@ -73,11 +79,11 @@ if uploaded_file is not None:
             if rows:
                 st.subheader(f"📊 Βρέθηκαν {len(rows)} σημειώσεις σε εδάφια!")
                 
-                # Δημιουργία XML ρίζας
-                root = ET.Element("db", serverCounter=str(len(rows) + 50))
+                # Δημιουργία XML δομής (BTNotes format)
+                root_xml = ET.Element("db", serverCounter=str(len(rows) + 50))
                 
                 # Φάκελοι
-                folders_element = ET.SubElement(root, "folders")
+                folders_element = ET.SubElement(root_xml, "folders")
                 import_folder_uuid = str(uuid.uuid4())
                 ET.SubElement(folders_element, "folder", {
                     "id": "1001",
@@ -88,7 +94,7 @@ if uploaded_file is not None:
                 })
                 
                 # Σημειώσεις
-                talks_element = ET.SubElement(root, "talks", number=str(len(rows)))
+                talks_element = ET.SubElement(root_xml, "talks", number=str(len(rows)))
                 current_timestamp = str(int(time.time() * 1000))
                 
                 for idx, row in enumerate(rows, start=1):
@@ -129,7 +135,7 @@ if uploaded_file is not None:
                     text.text = final_content
                     ET.SubElement(paragraf, "verses")
                 
-                xml_str = ET.tostring(root, encoding='utf-8')
+                xml_str = ET.tostring(root_xml, encoding='utf-8')
                 parsed_xml = minidom.parseString(xml_str)
                 pretty_xml = parsed_xml.toprettyxml(indent="    ", encoding="utf-8")
                 
@@ -148,9 +154,10 @@ if uploaded_file is not None:
                         mime="application/xml"
                     )
             else:
-                st.warning("Δεν βρέθηκαν σημειώσεις βιβλικών εδαφίων στο αρχείο.")
+                st.warning("Δεν βρέθηκαν σημειώσεις βιβλικών εδαφίων στη βάση δεδομένων.")
         else:
-            st.error("Το αρχείο δεν περιέχει έγκυρη βάση δεδομένων UserData.db.")
+            st.error("Δεν βρέθηκε κανένα αρχείο βάσης δεδομένων (.db) μέσα στο αντίγραφο ασφαλείας. Δοκιμάστε να κάνετε ξανά εξαγωγή (Backup) από το JW Library.")
             
     except Exception as e:
         st.error(f"Σφάλμα κατά την επεξεργασία: {e}")
+        
