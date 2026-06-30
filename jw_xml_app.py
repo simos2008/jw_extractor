@@ -9,27 +9,8 @@ from xml.dom import minidom
 
 st.set_page_config(page_title="JW to BTNotes XML", page_icon="📚", layout="centered")
 
-st.title("📚 Μετατροπέας JW Library σε BTNotes XML")
-st.write("Ανεβάστε το backup αρχείο σας για να πάρετε το XML για το Remix App σας.")
-
-BIBLE_BOOKS = {
-    1: "Γένεση", 2: "Έξοδος", 3: "Λευιτικό", 4: "Αριθμοί", 5: "Δευτερονόμιο",
-    6: "Ιησούς του Ναυή", 7: "Κριτές", 8: "Ρουθ", 9: "Α΄ Σαμουήλ", 10: "Β΄ Σαμουήλ",
-    11: "Α΄ Βασιλέων", 12: "Β΄ Βασιλέων", 13: "Α΄ Χρονικών", 14: "Β΄ Χρονικών",
-    15: "Έσδρας", 16: "Νεεμίας", 17: "Εσθήρ", 18: "Ιώβ", 19: "Ψαλμοί",
-    20: "Παροιμίες", 21: "Εκκλησιαστής", 22: "Άσμα Ασμάτων", 23: "Ησαΐας",
-    24: "Ιερεμίας", 25: "Θρήνοι", 26: "Ιεζεκιήλ", 27: "Δανιήλ", 28: "Ωσηέ",
-    29: "Ιωήλ", 30: "Αμώς", 31: "Αβδιού", 32: "Ιωνάς", 33: "Μιχαίας",
-    34: "Ναούμ", 35: "Αββακούμ", 36: "Σοφονίας", 37: "Αγγαίος", 38: "Ζαχαρίας",
-    39: "Μαλαχίας", 40: "Κατά Ματθαίον", 41: "Κατά Μάρκον", 42: "Κατά Λουκάν",
-    43: "Κατά Ιωάννην", 44: "Πράξεις", 45: "Ρωμαίους", 46: "Α΄ Κορινθίους",
-    47: "Β΄ Κορινθίους", 48: "Γαλάτες", 49: "Εφεσίους", 50: "Φιλιππησίους",
-    51: "Κολοσσαείς", 52: "Α΄ Θεσσαλονικείς", 53: "Β΄ Θεσσαλονικείς",
-    54: "Α΄ Τιμόθεο", 55: "Β΄ Τιμόθεο", 56: "Τίτο", 57: "Φιλήμονα",
-    58: "Εβραίους", 59: "Ιακώβου", 60: "Α΄ Πέτρου", 61: "Β΄ Πέτρου",
-    62: "Α΄ Ιωάννη", 63: "Β΄ Ιωάννη", 64: "Γ΄ Ιωάννη", 65: "Ιούδα",
-    66: "Αποκάλυψη"
-}
+st.title("📚 Διαγνωστικός Μετατροπέας JW Library")
+st.write("Ανεβάστε το αρχείο σας για να δούμε όλες τις σημειώσεις που περιέχει η βάση δεδομένων σας.")
 
 uploaded_file = st.file_uploader("Ανεβάστε το αρχείο .jwlibrary", type=["jwlibrary"])
 
@@ -56,54 +37,35 @@ if uploaded_file is not None:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             
-            # Δοκιμάζουμε πρώτα αν υπάρχει η στήλη Verse αντί για VerseNumber
+            # 1. Διαγνωστικό βήμα: Παίρνουμε ΟΛΕΣ τις σημειώσεις χωρίς κανένα φίλτρο
             try:
-                query = """
-                    SELECT 
-                        L.BookNumber, 
-                        L.ChapterNumber, 
-                        L.Verse, 
-                        N.Title, 
-                        N.Content, 
-                        N.Created
-                    FROM Note N
-                    JOIN Location L ON N.LocationId = L.LocationId
-                    WHERE L.BookNumber IS NOT NULL 
-                      AND L.KeySymbol IS NULL;
-                """
-                cursor.execute(query)
+                cursor.execute("SELECT Title, Content, Created FROM Note;")
                 rows = cursor.fetchall()
-            except sqlite3.OperationalError:
-                # Αν αποτύχει, δοκιμάζουμε χωρίς την ειδική στήλη εδαφίου για να μην κρασάρει
-                query = """
-                    SELECT 
-                        L.BookNumber, 
-                        L.ChapterNumber, 
-                        1 as Verse, 
-                        N.Title, 
-                        N.Content, 
-                        N.Created
-                    FROM Note N
-                    JOIN Location L ON N.LocationId = L.LocationId
-                    WHERE L.BookNumber IS NOT NULL 
-                      AND L.KeySymbol IS NULL;
-                """
-                cursor.execute(query)
-                rows = cursor.fetchall()
+            except Exception as e:
+                st.error(f"Σφάλμα κατά την ανάγνωση του πίνακα Note: {e}")
+                rows = []
                 
             conn.close()
             
             if rows:
-                st.subheader(f"📊 Βρέθηκαν {len(rows)} σημειώσεις σε εδάφια!")
+                st.success(f"📊 Συνολικά βρέθηκαν {len(rows)} σημειώσεις στη βάση δεδομένων σας!")
+                st.write("Παρακάτω φαίνονται οι πρώτες 10 σημειώσεις για να καταλάβουμε τη δομή τους:")
                 
+                # Εμφάνιση των πρώτων 10 σημειώσεων για έλεγχο
+                for idx, row in enumerate(rows[:10], start=1):
+                    st.markdown(f"**{idx}. Τίτλος:** {row[0]} | **Ημερομηνία:** {row[2]}")
+                    st.write(f"*{row[1]}*")
+                    st.markdown("---")
+                
+                # 2. Δημιουργία XML με ΟΛΕΣ τις σημειώσεις για να κάνεις τη δουλειά σου άμεσα
                 root_xml = ET.Element("db", serverCounter=str(len(rows) + 50))
-                
                 folders_element = ET.SubElement(root_xml, "folders")
                 import_folder_uuid = str(uuid.uuid4())
+                
                 ET.SubElement(folders_element, "folder", {
                     "id": "1001",
                     "uuid": import_folder_uuid,
-                    "name": "Εισαγωγή από JW Library",
+                    "name": "Όλες οι σημειώσεις JW",
                     "parent": "null",
                     "password": "null"
                 })
@@ -112,15 +74,13 @@ if uploaded_file is not None:
                 current_timestamp = str(int(time.time() * 1000))
                 
                 for idx, row in enumerate(rows, start=1):
-                    book_num, chapter, verse, title_text, content_text, created_date = row
-                    book_name = BIBLE_BOOKS.get(book_num, "Άγνωστο Βιβλίο")
-                    verse_ref = f"{book_name} {chapter}:{verse}"
+                    title_text, content_text, created_date = row
                     
-                    final_title = str(title_text) if title_text and str(title_text).strip() != "None" else verse_ref
+                    final_title = str(title_text) if title_text and str(title_text).strip() != "None" else f"Σημείωση {idx}"
                     final_content = str(content_text) if content_text else ""
                     
                     talk_uuid = str(uuid.uuid4())
-                    talk_node = ET.SubElement(talk_element, "talk", {
+                    talk_node = ET.SubElement(talks_element, "talk", {
                         "id": str(idx + 100),
                         "uuid": talk_uuid,
                         "last_created": "1",
@@ -153,22 +113,20 @@ if uploaded_file is not None:
                 parsed_xml = minidom.parseString(xml_str)
                 pretty_xml = parsed_xml.toprettyxml(indent="    ", encoding="utf-8")
                 
-                xml_filename = "jw_btnotes_import.xml"
+                xml_filename = "jw_all_notes_import.xml"
                 with open(xml_filename, "wb") as f:
                     f.write(pretty_xml)
                 
-                st.markdown("---")
-                st.success("Το αρχείο XML δημιουργήθηκε με επιτυχία!")
-                
+                st.success("Δημιουργήθηκε αρχείο XML με ΟΛΕΣ τις σημειώσεις σας!")
                 with open(xml_filename, "rb") as f:
                     st.download_button(
-                        label="📥 Κατεβάστε το αρχείο .xml για το Remix App",
+                        label="📥 Κατεβάστε το αρχείο .xml με ΟΛΕΣ τις σημειώσεις",
                         data=f,
-                        file_name="jw_to_btnotes.xml",
+                        file_name="jw_all_notes.xml",
                         mime="application/xml"
                     )
             else:
-                st.warning("Δεν βρέθηκαν σημειώσεις βιβλικών εδαφίων στη βάση δεδομένων.")
+                st.warning("Δεν βρέθηκε απολύτως καμία σημείωση μέσα στον πίνακα Note της βάσης δεδομένων.")
         else:
             st.error("Δεν βρέθηκε αρχείο βάσης δεδομένων.")
             
